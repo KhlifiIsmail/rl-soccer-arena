@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 import numpy as np
+import torch
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.logger import TensorBoardOutputFormat
 
@@ -62,11 +63,19 @@ class SoccerMetricsCallback(BaseCallback):
         infos = self.locals.get("infos", [])
 
         for info in infos:
+            # Skip if info is not a dictionary
+            if not isinstance(info, dict):
+                continue
+                
             if "episode" in info:
                 # Episode finished
                 ep_info = info["episode"]
-                self.episode_rewards.append(ep_info["r"])
-                self.episode_lengths.append(ep_info["l"])
+                # Handle both dict and numeric episode info formats (SB3 version compatibility)
+                if isinstance(ep_info, dict):
+                    if "r" in ep_info:
+                        self.episode_rewards.append(ep_info["r"])
+                    if "l" in ep_info:
+                        self.episode_lengths.append(ep_info["l"])
 
             # Track goals
             if info.get("goal_scored", False):
@@ -76,7 +85,7 @@ class SoccerMetricsCallback(BaseCallback):
                 self.current_goals_conceded += 1
 
         # Log metrics periodically
-        if self.num_timesteps % self.log_freq == 0:
+        if self.num_timesteps % self.log_freq == 0 and len(self.episode_rewards) > 0:
             self._log_metrics()
 
         return True
@@ -88,7 +97,7 @@ class SoccerMetricsCallback(BaseCallback):
 
         # Calculate statistics
         mean_reward = np.mean(self.episode_rewards)
-        mean_episode_length = np.mean(self.episode_lengths)
+        mean_episode_length = np.mean(self.episode_lengths) if self.episode_lengths else 0
 
         # Goal statistics
         total_goals_scored = sum(self.episode_goals_scored) if self.episode_goals_scored else 0
@@ -163,9 +172,16 @@ class BestModelCallback(BaseCallback):
         infos = self.locals.get("infos", [])
 
         for info in infos:
+            # Skip if info is not a dictionary
+            if not isinstance(info, dict):
+                continue
+                
             if "episode" in info:
-                ep_reward = info["episode"]["r"]
-                self.episode_rewards.append(ep_reward)
+                ep_info = info["episode"]
+                # Handle both dict and numeric formats
+                if isinstance(ep_info, dict) and "r" in ep_info:
+                    ep_reward = ep_info["r"]
+                    self.episode_rewards.append(ep_reward)
 
         # Check for improvement periodically
         if len(self.episode_rewards) >= 10:
@@ -174,12 +190,22 @@ class BestModelCallback(BaseCallback):
             if mean_reward > self.best_metric:
                 self.best_metric = mean_reward
 
-                # Save best model
-                self.model.save(self.save_path)
-
-                if self.verbose >= 1:
-                    print(f"\n[{self.num_timesteps} steps] New best model! "
-                          f"Mean reward: {mean_reward:.2f}")
+                # PROPER FIX: Detach environment, save, then reattach
+                original_env = self.model.env
+                self.model.env = None
+                
+                try:
+                    self.model.save(self.save_path)
+                    
+                    if self.verbose >= 1:
+                        print(f"\n[{self.num_timesteps} steps] New best model saved! "
+                              f"Mean reward: {mean_reward:.2f}")
+                except Exception as e:
+                    if self.verbose >= 1:
+                        print(f"Warning: Could not save model: {e}")
+                finally:
+                    # Always restore environment
+                    self.model.env = original_env
 
             # Clear buffer
             self.episode_rewards.clear()
@@ -281,9 +307,16 @@ class EarlyStoppingCallback(BaseCallback):
         infos = self.locals.get("infos", [])
 
         for info in infos:
+            # Skip if info is not a dictionary
+            if not isinstance(info, dict):
+                continue
+                
             if "episode" in info:
-                ep_reward = info["episode"]["r"]
-                self.episode_rewards.append(ep_reward)
+                ep_info = info["episode"]
+                # Handle both dict and numeric formats
+                if isinstance(ep_info, dict) and "r" in ep_info:
+                    ep_reward = ep_info["r"]
+                    self.episode_rewards.append(ep_reward)
 
         # Check periodically
         if self.num_timesteps % self.check_freq == 0 and len(self.episode_rewards) > 0:

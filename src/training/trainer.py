@@ -12,6 +12,10 @@ import logging
 from pathlib import Path
 from typing import Any, Dict
 
+# CRITICAL: Apply SB3 fix BEFORE importing PPO
+# This patches the episode info buffer bug in Stable-Baselines3
+import src.training.sb3_fix
+
 import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CallbackList
@@ -273,15 +277,27 @@ class SoccerTrainer:
             raise
 
         finally:
-            # Save final model
+            # Save final model - detach environment first
             final_model_path = self.output_dir / "checkpoints" / "final_model.zip"
             final_model_path.parent.mkdir(parents=True, exist_ok=True)
-            self.model.save(final_model_path)
-            logger.info(f"Saved final model to {final_model_path}")
-
-            # Cleanup
-            if self.env:
-                self.env.close()
+            
+            # Store and detach environment
+            original_env = self.model.env
+            self.model.env = None
+            
+            try:
+                self.model.save(final_model_path)
+                logger.info(f"Saved final model to {final_model_path}")
+            except Exception as save_error:
+                logger.error(f"Failed to save final model: {save_error}")
+            finally:
+                # Restore and close environment
+                self.model.env = original_env
+                if self.env:
+                    try:
+                        self.env.close()
+                    except:
+                        pass
 
         return self.model
 
@@ -325,7 +341,18 @@ class SoccerTrainer:
         checkpoint_path = self.output_dir / "checkpoints" / f"{checkpoint_name}.zip"
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self.model.save(checkpoint_path)
-        logger.info(f"Saved checkpoint to {checkpoint_path}")
+        # Detach environment before saving
+        original_env = self.model.env
+        self.model.env = None
+
+        try:
+            self.model.save(checkpoint_path)
+            logger.info(f"Saved checkpoint to {checkpoint_path}")
+        except Exception as e:
+            logger.error(f"Failed to save checkpoint: {e}")
+            raise
+        finally:
+            # Restore environment
+            self.model.env = original_env
 
         return checkpoint_path
