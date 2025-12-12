@@ -13,11 +13,14 @@ from pathlib import Path
 from typing import Any, Dict
 
 import torch
+from src.training.vec_wrappers import CleanEpisodeInfoVecWrapper
+from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CallbackList
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from src.environments.soccer_env import SoccerEnv
+from src.environments.soccer_env_2d import SoccerEnv2D
 from src.training.callbacks import (
     BestModelCallback,
     EarlyStoppingCallback,
@@ -98,15 +101,35 @@ class SoccerTrainer:
             Vectorized environment.
         """
         env_config = self.config.get("env", {})
+        mode = env_config.get("mode", "3d").lower()
 
         def make_env():
             def _init():
+                if mode == "2d":
+                    return SoccerEnv2D(
+                        render_mode=None,
+                        max_episode_steps=env_config.get("max_episode_steps", 2000),
+                        time_step=env_config.get("time_step", 1.0 / 60.0),
+                        reward_goal_scored=env_config.get("reward_goal_scored", 10.0),
+                        reward_goal_conceded=env_config.get("reward_goal_conceded", -10.0),
+                        reward_ball_proximity_scale=env_config.get("reward_ball_proximity_scale", 0.01),
+                        reward_time_penalty=env_config.get("reward_time_penalty", -0.001),
+                        reward_ball_progress_scale=env_config.get("reward_ball_progress_scale", 0.05),
+                        reward_possession_bonus=env_config.get("reward_possession_bonus", 0.05),
+                        possession_distance_threshold=env_config.get("possession_distance_threshold", 1.5),
+                    )
+                # Default: 3D PyBullet env
                 return SoccerEnv(
                     render_mode=None,  # No rendering during training
                     max_episode_steps=env_config.get("max_episode_steps", 2000),
+                    time_step=env_config.get("time_step", 1.0 / 240.0),
                     reward_goal_scored=env_config.get("reward_goal_scored", 10.0),
                     reward_goal_conceded=env_config.get("reward_goal_conceded", -10.0),
                     reward_ball_proximity_scale=env_config.get("reward_ball_proximity_scale", 0.01),
+                    reward_time_penalty=env_config.get("reward_time_penalty", -0.001),
+                    reward_ball_progress_scale=env_config.get("reward_ball_progress_scale", 0.05),
+                    reward_possession_bonus=env_config.get("reward_possession_bonus", 0.05),
+                    possession_distance_threshold=env_config.get("possession_distance_threshold", 1.5),
                 )
             return _init
 
@@ -241,7 +264,8 @@ class SoccerTrainer:
             n_envs=training_config.get("n_envs", 4),
             use_subprocess=training_config.get("use_subprocess", False),
         )
-
+        self.env = CleanEpisodeInfoVecWrapper(self.env, rename_to="episode_scalar")
+        self.env = VecMonitor(self.env)
         # Create model
         self.model = self.create_model(self.env)
 

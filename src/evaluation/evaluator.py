@@ -15,6 +15,7 @@ from stable_baselines3 import PPO
 from tqdm import tqdm
 
 from src.environments.soccer_env import SoccerEnv
+from src.environments.soccer_env_2d import SoccerEnv2D
 
 
 class AgentEvaluator:
@@ -30,6 +31,7 @@ class AgentEvaluator:
         self,
         model_path: str | Path,
         env_config: Dict[str, Any] | None = None,
+        env_mode: str = "3d",
         n_eval_episodes: int = 100,
     ) -> None:
         """Initialize agent evaluator.
@@ -44,7 +46,11 @@ class AgentEvaluator:
 
         # Load model
         env_config = env_config or {}
-        self.env = SoccerEnv(render_mode=None, **env_config)
+        env_mode = env_mode.lower()
+        if env_mode == "2d":
+            self.env = SoccerEnv2D(render_mode=None, **env_config)
+        else:
+            self.env = SoccerEnv(render_mode=None, **env_config)
         self.model = PPO.load(self.model_path, env=self.env)
 
         # Results storage

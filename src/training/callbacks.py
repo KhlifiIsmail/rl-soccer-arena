@@ -53,30 +53,46 @@ class SoccerMetricsCallback(BaseCallback):
         self.current_goals_conceded = 0
 
     def _on_step(self) -> bool:
-        """Called at each training step.
+        """Called at each environment step."""
+        infos = self.locals.get("infos", None)
 
-        Returns:
-            True to continue training, False to stop.
-        """
-        # Check for episode completion
-        infos = self.locals.get("infos", [])
+        # Normalize infos → list[dict]
+        if infos is None:
+            infos = []
+        elif isinstance(infos, dict):
+            infos = [infos]
 
         for info in infos:
-            if "episode" in info:
-                # Episode finished
-                ep_info = info["episode"]
-                self.episode_rewards.append(ep_info["r"])
-                self.episode_lengths.append(ep_info["l"])
+            if not isinstance(info, dict):
+                continue
 
-            # Track goals
+            # ---- Episode tracking (SB3-compatible + defensive) ----
+            ep_info = info.get("episode", None)
+
+            # Standard SB3 Monitor / VecMonitor format
+            if isinstance(ep_info, dict):
+                r = ep_info.get("r", None)
+                l = ep_info.get("l", None)
+
+                if isinstance(r, (int, float)):
+                    self.episode_rewards.append(float(r))
+                if isinstance(l, int):
+                    self.episode_lengths.append(l)
+
+            # Non-standard env: episode provided as scalar (int/float)
+            elif isinstance(ep_info, (int, float)):
+                self.episode_rewards.append(float(ep_info))
+                # length unknown → skip safely
+
+            # ---- Custom soccer signals ----
             if info.get("goal_scored", False):
                 self.current_goals_scored += 1
 
             if info.get("goal_conceded", False):
                 self.current_goals_conceded += 1
 
-        # Log metrics periodically
-        if self.num_timesteps % self.log_freq == 0:
+        # ---- Periodic logging ----
+        if self.log_freq > 0 and self.num_timesteps % self.log_freq == 0:
             self._log_metrics()
 
         return True
@@ -154,34 +170,45 @@ class BestModelCallback(BaseCallback):
         self.episode_rewards: list[float] = []
 
     def _on_step(self) -> bool:
-        """Called at each training step.
+        """Called at each training step. True to continue training."""
+        infos = self.locals.get("infos", None)
 
-        Returns:
-            True to continue training.
-        """
-        # Track episode rewards
-        infos = self.locals.get("infos", [])
+        # Normalize infos → list[dict]
+        if infos is None:
+            infos = []
+        elif isinstance(infos, dict):
+            infos = [infos]
 
         for info in infos:
-            if "episode" in info:
-                ep_reward = info["episode"]["r"]
-                self.episode_rewards.append(ep_reward)
+            if not isinstance(info, dict):
+                continue
+
+            ep = info.get("episode", None)
+
+            # Standard SB3 format: {"r": ..., "l": ...}
+            if isinstance(ep, dict):
+                r = ep.get("r", None)
+                if isinstance(r, (int, float)):
+                    self.episode_rewards.append(float(r))
+
+            # Non-standard env: episode is scalar reward
+            elif isinstance(ep, (int, float)):
+                self.episode_rewards.append(float(ep))
 
         # Check for improvement periodically
         if len(self.episode_rewards) >= 10:
-            mean_reward = np.mean(self.episode_rewards)
+            mean_reward = float(np.mean(self.episode_rewards))
 
             if mean_reward > self.best_metric:
                 self.best_metric = mean_reward
-
-                # Save best model
                 self.model.save(self.save_path)
 
                 if self.verbose >= 1:
-                    print(f"\n[{self.num_timesteps} steps] New best model! "
-                          f"Mean reward: {mean_reward:.2f}")
+                    print(
+                        f"\n[{self.num_timesteps} steps] New best model! "
+                        f"Mean reward: {mean_reward:.2f}"
+                    )
 
-            # Clear buffer
             self.episode_rewards.clear()
 
         return True
@@ -272,37 +299,47 @@ class EarlyStoppingCallback(BaseCallback):
         self.episode_rewards: list[float] = []
 
     def _on_step(self) -> bool:
-        """Check for improvement.
+        """Check for improvement. True to continue, False to stop training."""
+        infos = self.locals.get("infos", None)
 
-        Returns:
-            True to continue, False to stop training.
-        """
-        # Collect episode rewards
-        infos = self.locals.get("infos", [])
+        # Normalize infos → list[dict]
+        if infos is None:
+            infos = []
+        elif isinstance(infos, dict):
+            infos = [infos]
 
         for info in infos:
-            if "episode" in info:
-                ep_reward = info["episode"]["r"]
-                self.episode_rewards.append(ep_reward)
+            if not isinstance(info, dict):
+                continue
+
+            ep = info.get("episode", None)
+
+            if isinstance(ep, dict):
+                r = ep.get("r", None)
+                if isinstance(r, (int, float)):
+                    self.episode_rewards.append(float(r))
+
+            elif isinstance(ep, (int, float)):
+                self.episode_rewards.append(float(ep))
 
         # Check periodically
-        if self.num_timesteps % self.check_freq == 0 and len(self.episode_rewards) > 0:
-            mean_reward = np.mean(self.episode_rewards)
+        if self.check_freq > 0 and self.num_timesteps % self.check_freq == 0 and len(self.episode_rewards) > 0:
+            mean_reward = float(np.mean(self.episode_rewards))
 
             if mean_reward > self.best_metric + self.min_delta:
-                # Improvement found
                 self.best_metric = mean_reward
                 self.wait_count = 0
             else:
-                # No improvement
                 self.wait_count += 1
-
                 if self.wait_count >= self.patience:
                     if self.verbose >= 1:
-                        print(f"\n[{self.num_timesteps} steps] Early stopping triggered. "
-                              f"No improvement for {self.patience} checks.")
-                    return False  # Stop training
+                        print(
+                            f"\n[{self.num_timesteps} steps] Early stopping triggered. "
+                            f"No improvement for {self.patience} checks."
+                        )
+                    return False
 
             self.episode_rewards.clear()
 
         return True
+

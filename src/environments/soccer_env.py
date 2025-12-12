@@ -66,6 +66,9 @@ class SoccerEnv(gym.Env):
         reward_goal_conceded: float = -10.0,
         reward_ball_proximity_scale: float = 0.01,
         reward_time_penalty: float = -0.001,
+        reward_ball_progress_scale: float = 0.05,
+        reward_possession_bonus: float = 0.05,
+        possession_distance_threshold: float = 1.5,
     ) -> None:
         """Initialize Soccer environment.
 
@@ -97,6 +100,9 @@ class SoccerEnv(gym.Env):
         self.reward_goal_conceded = reward_goal_conceded
         self.reward_ball_proximity_scale = reward_ball_proximity_scale
         self.reward_time_penalty = reward_time_penalty
+        self.reward_ball_progress_scale = reward_ball_progress_scale
+        self.reward_possession_bonus = reward_possession_bonus
+        self.possession_distance_threshold = possession_distance_threshold
 
         # Define observation and action spaces
         self.observation_space = spaces.Box(
@@ -129,6 +135,7 @@ class SoccerEnv(gym.Env):
         # Previous state for reward shaping
         self.prev_ball_distance_blue = 0.0
         self.prev_ball_distance_red = 0.0
+        self.prev_ball_to_red_goal = 0.0
 
         # Initialize PyBullet
         self._init_pybullet()
@@ -223,6 +230,7 @@ class SoccerEnv(gym.Env):
         # Initialize previous distances
         self.prev_ball_distance_blue = self.blue_agent.get_distance_to(self.ball.get_position())
         self.prev_ball_distance_red = self.red_agent.get_distance_to(self.ball.get_position())
+        self.prev_ball_to_red_goal = np.linalg.norm(self.ball.get_position() - self.field_config.red_goal_center)
 
         # Get initial observation
         observation = self._get_observation()
@@ -379,6 +387,16 @@ class SoccerEnv(gym.Env):
         proximity_reward = (self.prev_ball_distance_blue - current_distance) * self.reward_ball_proximity_scale
         reward += proximity_reward
 
+        # Ball progress toward opponent goal
+        ball_to_red_goal = np.linalg.norm(ball_pos - self.field_config.red_goal_center)
+        progress_to_goal = self.prev_ball_to_red_goal - ball_to_red_goal
+        reward += progress_to_goal * self.reward_ball_progress_scale
+        self.prev_ball_to_red_goal = ball_to_red_goal
+
+        # Possession bonus for staying close to the ball
+        if current_distance < self.possession_distance_threshold:
+            reward += self.reward_possession_bonus
+
         # Update previous distance
         self.prev_ball_distance_blue = current_distance
 
@@ -393,8 +411,10 @@ class SoccerEnv(gym.Env):
         Returns:
             Info dictionary with episode statistics.
         """
+        # Avoid clobbering SB3's reserved info["episode"] (dict with r/l).
+        # Expose episode index under a distinct key instead.
         return {
-            "episode": self.episode_count,
+            "episode_index": self.episode_count,
             "step": self.current_step,
             "blue_goals": self.blue_goals,
             "red_goals": self.red_goals,

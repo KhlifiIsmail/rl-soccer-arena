@@ -42,6 +42,14 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--env-mode",
+        type=str,
+        default="3d",
+        choices=["2d", "3d"],
+        help="Environment mode to match the trained model",
+    )
+
+    parser.add_argument(
         "--deterministic",
         action="store_true",
         help="Use deterministic policy (no exploration)",
@@ -78,6 +86,7 @@ def main() -> None:
     logger.info(f"Loading model: {checkpoint_path}")
     evaluator = AgentEvaluator(
         model_path=checkpoint_path,
+        env_mode=args.env_mode,
         n_eval_episodes=args.episodes,
     )
 

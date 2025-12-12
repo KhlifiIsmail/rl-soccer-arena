@@ -22,18 +22,26 @@ class EnvConfig:
     Attributes:
         max_episode_steps: Maximum steps per episode.
         time_step: Physics simulation timestep.
+        mode: Environment variant ("3d" or "2d").
         reward_goal_scored: Reward for scoring.
         reward_goal_conceded: Penalty for conceding.
         reward_ball_proximity_scale: Ball proximity reward scale.
         reward_time_penalty: Time penalty per step.
+        reward_ball_progress_scale: Reward scale for moving ball toward opponent goal.
+        reward_possession_bonus: Bonus for maintaining close ball possession.
+        possession_distance_threshold: Distance threshold for possession bonus.
     """
 
     max_episode_steps: int = 2000
     time_step: float = 1.0 / 240.0
+    mode: str = "3d"
     reward_goal_scored: float = 10.0
     reward_goal_conceded: float = -10.0
     reward_ball_proximity_scale: float = 0.01
     reward_time_penalty: float = -0.001
+    reward_ball_progress_scale: float = 0.05
+    reward_possession_bonus: float = 0.05
+    possession_distance_threshold: float = 1.5
 
 
 @dataclass
