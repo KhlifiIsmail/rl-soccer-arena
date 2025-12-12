@@ -1,46 +1,42 @@
-# Training Configuration for RL Soccer Arena
+# Training Configuration - PROPER SOCCER
 
 # Environment Configuration
 env:
-  max_episode_steps: 2000
-  time_step: 0.004166666666666667 # 1/240
-  reward_goal_scored: 10.0
-  reward_goal_conceded: -10.0
-  reward_ball_proximity_scale: 0.01
-  reward_time_penalty: -0.001
+  max_episode_steps: 1000 # LONGER episodes
+  time_step: 0.01
+  reward_goal_scored: 1000.0 # HUGE reward for scoring
+  reward_goal_conceded: -1000.0 # HUGE punishment for conceding
+  reward_own_goal: -2000.0 # MASSIVE punishment for own goal
+  reward_ball_touch: 5.0 # Reward for touching ball
+  reward_ball_to_goal: 10.0 # Reward for moving ball towards opponent goal
+  reward_no_action: -1.0 # Punish doing nothing
 
 # Model Configuration (PPO)
 model:
   learning_rate: 0.0003
-  n_steps: 2048
-  batch_size: 64
+  n_steps: 512
+  batch_size: 128
   n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.01
+  ent_coef: 0.1
   vf_coef: 0.5
   max_grad_norm: 0.5
-  device: "cuda" # "auto", "cpu", or "cuda"
+  device: "cuda"
 
 # Training Configuration
 training:
-  total_timesteps: 1000000
-  n_envs: 4
+  total_timesteps: 2000000 # 2M steps for proper learning
+  n_envs: 8
   use_subprocess: false
-  log_freq: 1000
-  save_freq: 10000
+  log_freq: 2048
+  save_freq: 100000
   use_early_stopping: false
-  early_stopping_patience: 10
-  early_stopping_check_freq: 10000
 
 # Self-Play Configuration
 self_play:
-  enabled: true
-  pool_size: 10
-  save_freq: 100000
-  update_freq: 10000
-  selection_strategy: "uniform" # "latest", "random", "uniform"
+  enabled: false
 
 # General Settings
 seed: 42

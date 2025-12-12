@@ -24,16 +24,20 @@ class EnvConfig:
         time_step: Physics simulation timestep.
         reward_goal_scored: Reward for scoring.
         reward_goal_conceded: Penalty for conceding.
-        reward_ball_proximity_scale: Ball proximity reward scale.
-        reward_time_penalty: Time penalty per step.
+        reward_own_goal: Penalty for own goal.
+        reward_ball_touch: Reward for touching ball.
+        reward_ball_to_goal: Reward for moving ball to goal.
+        reward_no_action: Penalty for doing nothing.
     """
 
-    max_episode_steps: int = 2000
-    time_step: float = 1.0 / 240.0
-    reward_goal_scored: float = 10.0
-    reward_goal_conceded: float = -10.0
-    reward_ball_proximity_scale: float = 0.01
-    reward_time_penalty: float = -0.001
+    max_episode_steps: int = 1000
+    time_step: float = 0.01
+    reward_goal_scored: float = 1000.0
+    reward_goal_conceded: float = -1000.0
+    reward_own_goal: float = -2000.0
+    reward_ball_touch: float = 5.0
+    reward_ball_to_goal: float = 10.0
+    reward_no_action: float = -1.0
 
 
 @dataclass
@@ -55,13 +59,13 @@ class ModelConfig:
     """
 
     learning_rate: float = 3e-4
-    n_steps: int = 2048
-    batch_size: int = 64
+    n_steps: int = 512
+    batch_size: int = 128
     n_epochs: int = 10
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: float = 0.2
-    ent_coef: float = 0.01
+    ent_coef: float = 0.1
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
     device: str = "auto"
@@ -82,11 +86,11 @@ class TrainingConfig:
         early_stopping_check_freq: Early stopping check frequency.
     """
 
-    total_timesteps: int = 1_000_000
-    n_envs: int = 4
+    total_timesteps: int = 2_000_000
+    n_envs: int = 8
     use_subprocess: bool = False
-    log_freq: int = 1000
-    save_freq: int = 10_000
+    log_freq: int = 2048
+    save_freq: int = 100_000
     use_early_stopping: bool = False
     early_stopping_patience: int = 10
     early_stopping_check_freq: int = 10_000
@@ -104,7 +108,7 @@ class SelfPlayConfig:
         selection_strategy: Strategy for selecting opponents.
     """
 
-    enabled: bool = True
+    enabled: bool = False
     pool_size: int = 10
     save_freq: int = 100_000
     update_freq: int = 10_000

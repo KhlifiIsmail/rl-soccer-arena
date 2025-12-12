@@ -1,8 +1,7 @@
 """Visualization entry point for RL Soccer Arena.
 
 Usage:
-    python scripts/visualize.py --checkpoint outputs/checkpoints/best_model.zip
-    python scripts/visualize.py --checkpoint outputs/checkpoints/best_model.zip --episodes 5
+    python scripts/visualize.py --checkpoint outputs/checkpoints/best_policy.pth --episodes 5
 """
 
 import argparse
@@ -15,14 +14,34 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.visualization.renderer import SoccerRenderer
 from src.utils.logger import setup_logger
 from stable_baselines3 import PPO
+import torch
+
+
+def load_model_from_pth(pth_path: Path):
+    """Load model from .pth policy weights file WITHOUT creating environment."""
+    from src.environments.soccer_env import SoccerEnv
+    
+    # Create HEADLESS environment (no GUI)
+    env = SoccerEnv(render_mode=None)
+    
+    # Create new model
+    model = PPO("MlpPolicy", env, device="cpu")  # Use CPU to avoid issues
+    
+    # Load policy weights
+    checkpoint = torch.load(pth_path, map_location="cpu")
+    model.policy.load_state_dict(checkpoint['policy_state_dict'])
+    
+    # Close the headless environment immediately
+    env.close()
+    
+    print(f"Loaded policy from {pth_path}")
+    print(f"Training timesteps: {checkpoint.get('timesteps', 'unknown')}")
+    
+    return model
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command line arguments.
-
-    Returns:
-        Parsed arguments.
-    """
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Visualize trained RL soccer agents in 3D",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -32,7 +51,7 @@ def parse_args() -> argparse.Namespace:
         "--checkpoint",
         type=str,
         required=True,
-        help="Path to model checkpoint to visualize",
+        help="Path to model checkpoint (.zip or .pth)",
     )
 
     parser.add_argument(
@@ -78,17 +97,28 @@ def main() -> None:
     # Load model
     logger.info(f"Loading model: {checkpoint_path}")
     try:
-        model = PPO.load(checkpoint_path)
+        if checkpoint_path.suffix == ".pth":
+            model = load_model_from_pth(checkpoint_path)
+        else:
+            model = PPO.load(checkpoint_path)
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
-    # Create renderer
+    # Create renderer (this will create the GUI environment)
     logger.info("Initializing 3D renderer...")
-    renderer = SoccerRenderer(
-        model=model,
-        fps=args.fps,
-    )
+    try:
+        renderer = SoccerRenderer(
+            model=model,
+            fps=args.fps,
+        )
+    except Exception as e:
+        logger.error(f"Failed to create renderer: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
     # Render episodes
     try:
@@ -108,21 +138,29 @@ def main() -> None:
         total_reward = sum(ep["episode_reward"] for ep in episode_stats)
         avg_reward = total_reward / len(episode_stats)
         total_goals = sum(ep["blue_goals"] for ep in episode_stats)
+        total_conceded = sum(ep["red_goals"] for ep in episode_stats)
 
         print(f"Episodes: {len(episode_stats)}")
         print(f"Average Reward: {avg_reward:.2f}")
         print(f"Total Goals Scored: {total_goals}")
-        print("=" * 60)
+        print(f"Total Goals Conceded: {total_conceded}")
+        print(f"Goal Difference: {total_goals - total_conceded:+d}")
+        print("=" * 60 + "\n")
 
     except KeyboardInterrupt:
         logger.info("Visualization interrupted by user")
 
     except Exception as e:
-        logger.error(f"Visualization failed: {e}", exc_info=True)
+        logger.error(f"Visualization failed: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
     finally:
-        renderer.close()
+        try:
+            renderer.close()
+        except:
+            pass
         logger.info("Visualization complete")
 
 

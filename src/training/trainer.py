@@ -1,20 +1,18 @@
-"""Main training orchestrator for soccer RL agents.
-
-This module coordinates the complete training process including:
-- Environment setup
-- Model initialization
-- Self-play management
-- Training loops
-- Checkpointing and logging
-"""
+"""Main training orchestrator for soccer RL agents."""
 
 import logging
 from pathlib import Path
 from typing import Any, Dict
 
 # CRITICAL: Apply SB3 fix BEFORE importing PPO
-# This patches the episode info buffer bug in Stable-Baselines3
-import src.training.sb3_fix
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+try:
+    import src.training.sb3_fix
+    print("[TRAINER] SB3 fix loaded successfully")
+except ImportError as e:
+    print(f"[TRAINER] Warning: Could not load SB3 fix: {e}")
 
 import torch
 from stable_baselines3 import PPO
@@ -35,46 +33,23 @@ logger = logging.getLogger(__name__)
 
 
 class SoccerTrainer:
-    """Training orchestrator for soccer RL agents.
-
-    Manages complete training pipeline:
-    - Environment creation and vectorization
-    - PPO agent initialization
-    - Self-play opponent management
-    - Training execution with callbacks
-    - Model checkpointing
-
-    Attributes:
-        config: Training configuration dictionary.
-        env: Vectorized training environment.
-        model: PPO model being trained.
-        self_play_manager: Self-play opponent manager.
-        output_dir: Directory for outputs (models, logs).
-    """
+    """Training orchestrator for soccer RL agents."""
 
     def __init__(
         self,
         config: Dict[str, Any],
         output_dir: str | Path = "outputs",
     ) -> None:
-        """Initialize soccer trainer.
-
-        Args:
-            config: Training configuration dictionary.
-            output_dir: Directory for saving outputs.
-        """
+        """Initialize soccer trainer."""
         self.config = config
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Training state
         self.env = None
         self.model = None
         self.self_play_manager = None
 
-        # Setup logging
         self._setup_logging()
-
         logger.info("Initialized SoccerTrainer")
         logger.info(f"Output directory: {self.output_dir}")
 
@@ -91,26 +66,22 @@ class SoccerTrainer:
             ],
         )
 
-    def create_env(self, n_envs: int = 4, use_subprocess: bool = False) -> DummyVecEnv | SubprocVecEnv:
-        """Create vectorized training environment.
-
-        Args:
-            n_envs: Number of parallel environments.
-            use_subprocess: Use subprocesses (True) or single process (False).
-
-        Returns:
-            Vectorized environment.
-        """
+    def create_env(self, n_envs: int = 8, use_subprocess: bool = False):
+        """Create vectorized training environment."""
         env_config = self.config.get("env", {})
 
         def make_env():
             def _init():
                 return SoccerEnv(
-                    render_mode=None,  # No rendering during training
-                    max_episode_steps=env_config.get("max_episode_steps", 2000),
-                    reward_goal_scored=env_config.get("reward_goal_scored", 10.0),
-                    reward_goal_conceded=env_config.get("reward_goal_conceded", -10.0),
-                    reward_ball_proximity_scale=env_config.get("reward_ball_proximity_scale", 0.01),
+                    render_mode=None,
+                    max_episode_steps=env_config.get("max_episode_steps", 1000),
+                    time_step=env_config.get("time_step", 0.01),
+                    reward_goal_scored=env_config.get("reward_goal_scored", 1000.0),
+                    reward_goal_conceded=env_config.get("reward_goal_conceded", -1000.0),
+                    reward_own_goal=env_config.get("reward_own_goal", -2000.0),
+                    reward_ball_touch=env_config.get("reward_ball_touch", 5.0),
+                    reward_ball_to_goal=env_config.get("reward_ball_to_goal", 10.0),
+                    reward_no_action=env_config.get("reward_no_action", -1.0),
                 )
             return _init
 
@@ -120,39 +91,29 @@ class SoccerTrainer:
             env = DummyVecEnv([make_env() for _ in range(n_envs)])
 
         logger.info(f"Created {n_envs} parallel environments")
-
         return env
 
-    def create_model(self, env: DummyVecEnv | SubprocVecEnv) -> PPO:
-        """Create PPO model.
-
-        Args:
-            env: Training environment.
-
-        Returns:
-            PPO model.
-        """
+    def create_model(self, env):
+        """Create PPO model."""
         model_config = self.config.get("model", {})
 
-        # Device selection
         device = model_config.get("device", "auto")
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
         logger.info(f"Using device: {device}")
 
-        # Create PPO model
         model = PPO(
             policy="MlpPolicy",
             env=env,
             learning_rate=model_config.get("learning_rate", 3e-4),
-            n_steps=model_config.get("n_steps", 2048),
-            batch_size=model_config.get("batch_size", 64),
+            n_steps=model_config.get("n_steps", 512),
+            batch_size=model_config.get("batch_size", 128),
             n_epochs=model_config.get("n_epochs", 10),
             gamma=model_config.get("gamma", 0.99),
             gae_lambda=model_config.get("gae_lambda", 0.95),
             clip_range=model_config.get("clip_range", 0.2),
-            ent_coef=model_config.get("ent_coef", 0.01),
+            ent_coef=model_config.get("ent_coef", 0.1),
             vf_coef=model_config.get("vf_coef", 0.5),
             max_grad_norm=model_config.get("max_grad_norm", 0.5),
             tensorboard_log=str(self.output_dir / "tensorboard"),
@@ -161,40 +122,28 @@ class SoccerTrainer:
         )
 
         logger.info("Created PPO model")
-        logger.info(f"Learning rate: {model_config.get('learning_rate', 3e-4)}")
-        logger.info(f"Batch size: {model_config.get('batch_size', 64)}")
-
         return model
 
     def create_callbacks(self) -> CallbackList:
-        """Create training callbacks.
-
-        Returns:
-            Callback list for training.
-        """
+        """Create training callbacks."""
         training_config = self.config.get("training", {})
 
         callbacks = [
-            # Metrics logging
             SoccerMetricsCallback(
-                log_freq=training_config.get("log_freq", 1000),
+                log_freq=training_config.get("log_freq", 2048),
                 verbose=1
             ),
-
-            # Best model saving
             BestModelCallback(
                 save_path=self.output_dir / "checkpoints" / "best_model.zip",
                 verbose=1
             ),
-
-            # Progress bar
             ProgressBarCallback(
-                total_timesteps=training_config.get("total_timesteps", 1_000_000),
+                total_timesteps=training_config.get("total_timesteps", 2_000_000),
+                n_envs=training_config.get("n_envs", 8),
                 verbose=0
             ),
         ]
 
-        # Optional early stopping
         if training_config.get("use_early_stopping", False):
             callbacks.append(
                 EarlyStoppingCallback(
@@ -206,15 +155,11 @@ class SoccerTrainer:
 
         return CallbackList(callbacks)
 
-    def setup_self_play(self) -> SelfPlayManager:
-        """Setup self-play opponent management.
-
-        Returns:
-            Self-play manager.
-        """
+    def setup_self_play(self):
+        """Setup self-play opponent management."""
         self_play_config = self.config.get("self_play", {})
 
-        if not self_play_config.get("enabled", True):
+        if not self_play_config.get("enabled", False):
             logger.info("Self-play disabled")
             return None
 
@@ -227,36 +172,24 @@ class SoccerTrainer:
         )
 
         logger.info("Self-play enabled")
-        logger.info(f"Pool size: {self_play_config.get('pool_size', 10)}")
-        logger.info(f"Save frequency: {self_play_config.get('save_freq', 100_000)} steps")
-
         return manager
 
     def train(self) -> PPO:
-        """Execute training.
-
-        Returns:
-            Trained PPO model.
-        """
+        """Execute training."""
         training_config = self.config.get("training", {})
 
-        # Create environment
         self.env = self.create_env(
-            n_envs=training_config.get("n_envs", 4),
+            n_envs=training_config.get("n_envs", 8),
             use_subprocess=training_config.get("use_subprocess", False),
         )
 
-        # Create model
         self.model = self.create_model(self.env)
 
-        # Setup self-play
         self.self_play_manager = self.setup_self_play()
 
-        # Create callbacks
         callbacks = self.create_callbacks()
 
-        # Training loop
-        total_timesteps = training_config.get("total_timesteps", 1_000_000)
+        total_timesteps = training_config.get("total_timesteps", 2_000_000)
         logger.info(f"Starting training for {total_timesteps} timesteps")
 
         try:
@@ -273,22 +206,21 @@ class SoccerTrainer:
             logger.info("Training interrupted by user")
 
         except Exception as e:
-            logger.error(f"Training failed with error: {e}", exc_info=True)
+            logger.error(f"Training failed: {e}", exc_info=True)
             raise
 
         finally:
-            # Save final model as policy weights only
-            final_model_path = self.output_dir / "checkpoints" / "final_policy.pth"
-            final_model_path.parent.mkdir(parents=True, exist_ok=True)
-            
+            final_path = self.output_dir / "checkpoints" / "final_policy.pth"
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+
             try:
                 torch.save({
                     'policy_state_dict': self.model.policy.state_dict(),
                     'timesteps': self.model.num_timesteps,
-                }, final_model_path)
-                logger.info(f"Saved final model to {final_model_path}")
-            except Exception as save_error:
-                logger.error(f"Failed to save final model: {save_error}")
+                }, final_path)
+                logger.info(f"Saved final model to {final_path}")
+            except Exception as e:
+                logger.error(f"Failed to save final model: {e}")
             finally:
                 if self.env:
                     try:
@@ -299,41 +231,24 @@ class SoccerTrainer:
         return self.model
 
     def load_checkpoint(self, checkpoint_path: str | Path) -> PPO:
-        """Load model from checkpoint.
-
-        Args:
-            checkpoint_path: Path to checkpoint file.
-
-        Returns:
-            Loaded PPO model.
-        """
+        """Load model from checkpoint."""
         checkpoint_path = Path(checkpoint_path)
 
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-        # Create environment for model
         if self.env is None:
             self.env = self.create_env(n_envs=1)
 
-        # Load model
         self.model = PPO.load(checkpoint_path, env=self.env)
-
         logger.info(f"Loaded checkpoint from {checkpoint_path}")
 
         return self.model
 
     def save_checkpoint(self, checkpoint_name: str = "checkpoint") -> Path:
-        """Save current model checkpoint.
-
-        Args:
-            checkpoint_name: Name for checkpoint file.
-
-        Returns:
-            Path to saved checkpoint.
-        """
+        """Save current model checkpoint."""
         if self.model is None:
-            raise RuntimeError("No model to save. Train or load a model first.")
+            raise RuntimeError("No model to save")
 
         checkpoint_path = self.output_dir / "checkpoints" / f"{checkpoint_name}.pth"
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
