@@ -277,22 +277,19 @@ class SoccerTrainer:
             raise
 
         finally:
-            # Save final model - detach environment first
-            final_model_path = self.output_dir / "checkpoints" / "final_model.zip"
+            # Save final model as policy weights only
+            final_model_path = self.output_dir / "checkpoints" / "final_policy.pth"
             final_model_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # Store and detach environment
-            original_env = self.model.env
-            self.model.env = None
-            
             try:
-                self.model.save(final_model_path)
+                torch.save({
+                    'policy_state_dict': self.model.policy.state_dict(),
+                    'timesteps': self.model.num_timesteps,
+                }, final_model_path)
                 logger.info(f"Saved final model to {final_model_path}")
             except Exception as save_error:
                 logger.error(f"Failed to save final model: {save_error}")
             finally:
-                # Restore and close environment
-                self.model.env = original_env
                 if self.env:
                     try:
                         self.env.close()
@@ -338,21 +335,17 @@ class SoccerTrainer:
         if self.model is None:
             raise RuntimeError("No model to save. Train or load a model first.")
 
-        checkpoint_path = self.output_dir / "checkpoints" / f"{checkpoint_name}.zip"
+        checkpoint_path = self.output_dir / "checkpoints" / f"{checkpoint_name}.pth"
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Detach environment before saving
-        original_env = self.model.env
-        self.model.env = None
-
         try:
-            self.model.save(checkpoint_path)
+            torch.save({
+                'policy_state_dict': self.model.policy.state_dict(),
+                'timesteps': self.model.num_timesteps,
+            }, checkpoint_path)
             logger.info(f"Saved checkpoint to {checkpoint_path}")
         except Exception as e:
             logger.error(f"Failed to save checkpoint: {e}")
             raise
-        finally:
-            # Restore environment
-            self.model.env = original_env
 
         return checkpoint_path
