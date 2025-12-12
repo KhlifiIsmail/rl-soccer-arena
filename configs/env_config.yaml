@@ -1,0 +1,41 @@
+# Environment Configuration for RL Soccer Arena
+
+# Field Dimensions
+field:
+  length: 30.0 # meters
+  width: 20.0 # meters
+  wall_height: 2.0
+  wall_thickness: 0.5
+  goal_width: 4.0
+  goal_depth: 1.0
+  goal_height: 2.0
+
+# Agent Configuration
+agent:
+  radius: 0.5
+  height: 1.0
+  mass: 5.0
+  max_force: 50.0
+  max_angular_force: 10.0
+  lateral_friction: 0.8
+  restitution: 0.3
+
+# Ball Configuration
+ball:
+  radius: 0.22
+  mass: 0.45
+  restitution: 0.7
+  lateral_friction: 0.5
+  rolling_friction: 0.01
+  spinning_friction: 0.01
+
+# Physics Configuration
+physics:
+  gravity: -9.81
+  time_step: 0.004166666666666667 # 1/240 seconds
+  solver_iterations: 50
+
+# Episode Configuration
+episode:
+  max_steps: 2000
+  reset_on_goal: true

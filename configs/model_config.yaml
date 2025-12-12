@@ -1,0 +1,47 @@
+# Model Architecture Configuration for RL Soccer Arena
+
+# Policy Network Architecture
+policy:
+  type: "MlpPolicy"  # "MlpPolicy" or "SoccerActorCriticPolicy"
+
+  # Network Architecture
+  net_arch:
+    - pi: [256, 256]  # Actor network layers
+      vf: [256, 256]  # Critic network layers
+
+  activation_fn: "relu"  # "relu", "tanh", "elu"
+
+  # Feature Extractor
+  features_extractor:
+    class: "SoccerFeatureExtractor"  # "SoccerFeatureExtractor", "SimpleSoccerFeatureExtractor", "AttentionSoccerFeatureExtractor"
+    features_dim: 256
+    hidden_dim: 128
+
+# PPO Algorithm Parameters
+algorithm:
+  learning_rate: 0.0003
+  n_steps: 2048  # Steps per environment per update
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99  # Discount factor
+  gae_lambda: 0.95  # GAE parameter
+  clip_range: 0.2  # PPO clip range
+  clip_range_vf: null  # Value function clip range (null = no clipping)
+  normalize_advantage: true
+  ent_coef: 0.01  # Entropy coefficient
+  vf_coef: 0.5  # Value function coefficient
+  max_grad_norm: 0.5  # Gradient clipping
+  use_sde: false  # Use State Dependent Exploration
+  sde_sample_freq: -1
+
+# Optimizer
+optimizer:
+  type: "Adam"
+  eps: 1.0e-5
+
+# Device Configuration
+device: "auto"  # "auto", "cpu", "cuda", "cuda:0", etc.
+
+# Logging
+tensorboard_log: "outputs/tensorboard"
+verbose: 1
