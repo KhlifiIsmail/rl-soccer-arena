@@ -1,15 +1,15 @@
-# Training Configuration - PROPER SOCCER
+# Training Configuration - SELF-PLAY MODE
 
 # Environment Configuration
 env:
-  max_episode_steps: 1000 # LONGER episodes
+  max_episode_steps: 2000
   time_step: 0.01
-  reward_goal_scored: 1000.0 # HUGE reward for scoring
-  reward_goal_conceded: -1000.0 # HUGE punishment for conceding
-  reward_own_goal: -2000.0 # MASSIVE punishment for own goal
-  reward_ball_touch: 5.0 # Reward for touching ball
-  reward_ball_to_goal: 10.0 # Reward for moving ball towards opponent goal
-  reward_no_action: -1.0 # Punish doing nothing
+  reward_goal_scored: 100.0
+  reward_goal_conceded: -50.0
+  reward_own_goal: -100.0
+  reward_ball_touch: 2.0
+  reward_ball_to_goal: 5.0
+  reward_no_action: 0.0
 
 # Model Configuration (PPO)
 model:
@@ -27,7 +27,7 @@ model:
 
 # Training Configuration
 training:
-  total_timesteps: 2000000 # 2M steps for proper learning
+  total_timesteps: 3000000
   n_envs: 8
   use_subprocess: false
   log_freq: 2048
@@ -36,7 +36,11 @@ training:
 
 # Self-Play Configuration
 self_play:
-  enabled: false
+  enabled: true
+  pool_size: 10
+  save_freq: 100000
+  update_freq: 10000
+  selection_strategy: "uniform"
 
 # General Settings
 seed: 42

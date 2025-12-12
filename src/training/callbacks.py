@@ -62,7 +62,7 @@ class SoccerMetricsCallback(BaseCallback):
         return True
 
     def _log_metrics(self) -> None:
-        """Log collected metrics."""
+        """Log collected metrics - FORCE IT TO LOG."""
         if len(self.episode_rewards) == 0:
             return
         
@@ -71,12 +71,17 @@ class SoccerMetricsCallback(BaseCallback):
         total_goals_scored = sum(self.episode_goals_scored) if self.episode_goals_scored else 0
         total_goals_conceded = sum(self.episode_goals_conceded) if self.episode_goals_conceded else 0
         
-        self.logger.record("soccer/mean_reward", mean_reward)
-        self.logger.record("soccer/mean_episode_length", mean_length)
-        self.logger.record("soccer/goals_scored", total_goals_scored)
-        self.logger.record("soccer/goals_conceded", total_goals_conceded)
-        self.logger.record("soccer/goal_difference", total_goals_scored - total_goals_conceded)
-        self.logger.record("soccer/episodes", len(self.episode_rewards))
+        # FORCE LOGGING - bypass any filters
+        try:
+            self.logger.record("soccer/mean_reward", float(mean_reward))
+            self.logger.record("soccer/mean_episode_length", float(mean_length))
+            self.logger.record("soccer/goals_scored", int(total_goals_scored))
+            self.logger.record("soccer/goals_conceded", int(total_goals_conceded))
+            self.logger.record("soccer/goal_difference", int(total_goals_scored - total_goals_conceded))
+            self.logger.record("soccer/episodes", len(self.episode_rewards))
+            self.logger.dump(step=self.num_timesteps)
+        except Exception as e:
+            print(f"WARNING: Failed to log metrics: {e}")
         
         if self.verbose >= 1:
             print(f"\n[{self.num_timesteps}] Reward: {mean_reward:.2f} | "

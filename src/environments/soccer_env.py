@@ -1,6 +1,6 @@
-"""Soccer Gym environment - PROPER REWARDS."""
+"""Soccer Gym environment - SELF-PLAY MODE."""
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Optional
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -14,24 +14,24 @@ from src.environments.field import FieldDimensions, SoccerField
 
 
 class SoccerEnv(gym.Env):
-    """3D Soccer environment - SIMPLE ACTIONS, PROPER REWARDS."""
+    """3D Soccer environment with self-play support."""
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
     def __init__(
         self,
         render_mode: str | None = None,
-        max_episode_steps: int = 1000,
+        max_episode_steps: int = 2000,
         time_step: float = 0.01,
         field_config: FieldDimensions | None = None,
         agent_config: AgentConfig | None = None,
         ball_config: BallConfig | None = None,
-        reward_goal_scored: float = 1000.0,
-        reward_goal_conceded: float = -1000.0,
-        reward_own_goal: float = -2000.0,
-        reward_ball_touch: float = 5.0,
-        reward_ball_to_goal: float = 10.0,
-        reward_no_action: float = -1.0,
+        reward_goal_scored: float = 100.0,
+        reward_goal_conceded: float = -50.0,
+        reward_own_goal: float = -100.0,
+        reward_ball_touch: float = 2.0,
+        reward_ball_to_goal: float = 5.0,
+        reward_no_action: float = 0.0,
     ) -> None:
         """Initialize Soccer environment."""
         super().__init__()
@@ -51,7 +51,6 @@ class SoccerEnv(gym.Env):
         self.reward_ball_to_goal = reward_ball_to_goal
         self.reward_no_action = reward_no_action
 
-        # Observation: [agent_pos(3), agent_vel(3), ball_pos(3), ball_vel(3), opponent_pos(3), opponent_vel(3)]
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -59,7 +58,6 @@ class SoccerEnv(gym.Env):
             dtype=np.float32
         )
 
-        # Action: [x_direction, y_direction] - simple 2D movement
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
@@ -78,10 +76,18 @@ class SoccerEnv(gym.Env):
         self.blue_goals = 0
         self.red_goals = 0
 
-        self.prev_ball_to_red_goal_dist = 0.0
+        self.prev_ball_distance = 999.0
+        self.prev_ball_to_red_goal_dist = 999.0
         self.blue_touched_ball_last = False
 
+        # Self-play opponent policy
+        self.opponent_policy: Optional[Any] = None
+
         self._init_pybullet()
+
+    def set_opponent_policy(self, policy: Any) -> None:
+        """Set opponent policy for self-play."""
+        self.opponent_policy = policy
 
     def _init_pybullet(self) -> None:
         """Initialize PyBullet."""
@@ -151,8 +157,13 @@ class SoccerEnv(gym.Env):
 
         self.current_step = 0
         self.episode_count += 1
+        self.blue_goals = 0
+        self.red_goals = 0
 
         ball_pos = self.ball.get_position()
+        blue_pos = self.blue_agent.get_position()
+        
+        self.prev_ball_distance = np.linalg.norm(blue_pos - ball_pos)
         self.prev_ball_to_red_goal_dist = np.linalg.norm(ball_pos - self.field_config.red_goal_center)
         self.blue_touched_ball_last = False
 
@@ -185,7 +196,7 @@ class SoccerEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
     def _get_observation(self) -> np.ndarray:
-        """Get observation - SIMPLIFIED."""
+        """Get observation."""
         blue_pos = self.blue_agent.get_position()
         blue_vel = self.blue_agent.get_velocity()
 
@@ -206,37 +217,56 @@ class SoccerEnv(gym.Env):
 
         return observation
 
-    def _get_red_agent_action(self) -> np.ndarray:
-        """Red agent - CHASE BALL AGGRESSIVELY."""
-        ball_pos = self.ball.get_position()
+    def _get_red_observation(self) -> np.ndarray:
+        """Get observation from red agent's perspective (flipped)."""
         red_pos = self.red_agent.get_position()
+        red_vel = self.red_agent.get_velocity()
 
-        to_ball = ball_pos - red_pos
-        distance = np.linalg.norm(to_ball[:2])
+        ball_pos = self.ball.get_position()
+        ball_vel = self.ball.get_velocity()
 
-        if distance > 0.1:
-            direction = to_ball[:2] / (distance + 1e-6)
-            return direction.astype(np.float32)
+        blue_pos = self.blue_agent.get_position()
+        blue_vel = self.blue_agent.get_velocity()
+
+        # Flip x-coordinates for red's perspective
+        observation = np.concatenate([
+            [-red_pos[0], red_pos[1], red_pos[2]],
+            [-red_vel[0], red_vel[1], red_vel[2]],
+            [-ball_pos[0], ball_pos[1], ball_pos[2]],
+            [-ball_vel[0], ball_vel[1], ball_vel[2]],
+            [-blue_pos[0], blue_pos[1], blue_pos[2]],
+            [-blue_vel[0], blue_vel[1], blue_vel[2]],
+        ]).astype(np.float32)
+
+        return observation
+
+    def _get_red_agent_action(self) -> np.ndarray:
+        """Get red agent action using opponent policy or random."""
+        if self.opponent_policy is not None:
+            try:
+                red_obs = self._get_red_observation()
+                action, _ = self.opponent_policy.predict(red_obs, deterministic=False)
+                # Flip x-axis action back
+                return np.array([-action[0], action[1]], dtype=np.float32)
+            except Exception as e:
+                # Fallback to random if policy fails
+                return np.random.uniform(-0.5, 0.5, size=2).astype(np.float32)
         else:
-            # Kick towards blue goal
-            blue_goal = self.field_config.blue_goal_center
-            to_goal = blue_goal - ball_pos
-            direction = to_goal[:2] / (np.linalg.norm(to_goal[:2]) + 1e-6)
-            return direction.astype(np.float32)
+            # Random opponent until self-play kicks in
+            if np.random.random() < 0.3:
+                return np.array([0.0, 0.0], dtype=np.float32)
+            return np.random.uniform(-0.5, 0.5, size=2).astype(np.float32)
 
     def _check_goal(self) -> Tuple[bool, float, bool]:
         """Check goals - detect own goals."""
         ball_pos = self.ball.get_position()
 
-        # Blue scored in red goal
         if self.field_config.is_in_red_goal(ball_pos):
             self.blue_goals += 1
             return True, self.reward_goal_scored, False
 
-        # Red scored in blue goal OR blue own goal
         if self.field_config.is_in_blue_goal(ball_pos):
             self.red_goals += 1
-            # Check if blue touched ball last - if so, it's an own goal
             if self.blue_touched_ball_last:
                 return True, self.reward_own_goal, True
             else:
@@ -245,33 +275,36 @@ class SoccerEnv(gym.Env):
         return False, 0.0, False
 
     def _calculate_reward(self, goal_reward: float, own_goal: bool) -> float:
-        """Calculate reward - PROPER SYSTEM."""
+        """Calculate reward - POSITIVE FOCUSED."""
         reward = goal_reward
 
         ball_pos = self.ball.get_position()
         blue_pos = self.blue_agent.get_position()
 
-        # Check if blue is touching ball
-        dist_to_ball = np.linalg.norm(blue_pos - ball_pos)
-        if dist_to_ball < 1.0:
+        # REWARD FOR GETTING CLOSER TO BALL
+        current_distance = np.linalg.norm(blue_pos - ball_pos)
+        distance_improvement = self.prev_ball_distance - current_distance
+        
+        if distance_improvement > 0:
+            reward += distance_improvement * 0.5
+        
+        self.prev_ball_distance = current_distance
+
+        # BIG REWARD FOR TOUCHING BALL
+        if current_distance < 1.0:
             reward += self.reward_ball_touch
             self.blue_touched_ball_last = True
         else:
             self.blue_touched_ball_last = False
 
-        # Reward for moving ball towards red goal
+        # REWARD FOR MOVING BALL TOWARDS RED GOAL
         current_ball_to_goal = np.linalg.norm(ball_pos - self.field_config.red_goal_center)
         ball_progress = self.prev_ball_to_red_goal_dist - current_ball_to_goal
         
-        if ball_progress > 0 and dist_to_ball < 2.0:  # Only reward if blue is near ball
+        if ball_progress > 0 and current_distance < 2.0:
             reward += ball_progress * self.reward_ball_to_goal
 
         self.prev_ball_to_red_goal_dist = current_ball_to_goal
-
-        # Punish doing nothing
-        blue_vel = self.blue_agent.get_velocity()
-        if np.linalg.norm(blue_vel[:2]) < 0.5:
-            reward += self.reward_no_action
 
         return reward
 

@@ -1,10 +1,9 @@
-"""Main training orchestrator for soccer RL agents."""
+"""Main training orchestrator for soccer RL agents with self-play."""
 
 import logging
 from pathlib import Path
 from typing import Any, Dict
 
-# CRITICAL: Apply SB3 fix BEFORE importing PPO
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -33,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class SoccerTrainer:
-    """Training orchestrator for soccer RL agents."""
+    """Training orchestrator for soccer RL agents with self-play."""
 
     def __init__(
         self,
@@ -74,14 +73,14 @@ class SoccerTrainer:
             def _init():
                 return SoccerEnv(
                     render_mode=None,
-                    max_episode_steps=env_config.get("max_episode_steps", 1000),
+                    max_episode_steps=env_config.get("max_episode_steps", 2000),
                     time_step=env_config.get("time_step", 0.01),
-                    reward_goal_scored=env_config.get("reward_goal_scored", 1000.0),
-                    reward_goal_conceded=env_config.get("reward_goal_conceded", -1000.0),
-                    reward_own_goal=env_config.get("reward_own_goal", -2000.0),
-                    reward_ball_touch=env_config.get("reward_ball_touch", 5.0),
-                    reward_ball_to_goal=env_config.get("reward_ball_to_goal", 10.0),
-                    reward_no_action=env_config.get("reward_no_action", -1.0),
+                    reward_goal_scored=env_config.get("reward_goal_scored", 100.0),
+                    reward_goal_conceded=env_config.get("reward_goal_conceded", -50.0),
+                    reward_own_goal=env_config.get("reward_own_goal", -100.0),
+                    reward_ball_touch=env_config.get("reward_ball_touch", 2.0),
+                    reward_ball_to_goal=env_config.get("reward_ball_to_goal", 5.0),
+                    reward_no_action=env_config.get("reward_no_action", 0.0),
                 )
             return _init
 
@@ -138,7 +137,7 @@ class SoccerTrainer:
                 verbose=1
             ),
             ProgressBarCallback(
-                total_timesteps=training_config.get("total_timesteps", 2_000_000),
+                total_timesteps=training_config.get("total_timesteps", 3_000_000),
                 n_envs=training_config.get("n_envs", 8),
                 verbose=0
             ),
@@ -174,8 +173,20 @@ class SoccerTrainer:
         logger.info("Self-play enabled")
         return manager
 
+    def _update_opponent_policies(self):
+        """Update opponent policies in all environments."""
+        if self.self_play_manager is None:
+            return
+
+        opponent = self.self_play_manager.callback.current_opponent
+
+        if opponent is not None:
+            # Update opponent policy in each environment
+            for env in self.env.envs:
+                env.set_opponent_policy(opponent.policy)
+
     def train(self) -> PPO:
-        """Execute training."""
+        """Execute training with self-play."""
         training_config = self.config.get("training", {})
 
         self.env = self.create_env(
@@ -189,16 +200,42 @@ class SoccerTrainer:
 
         callbacks = self.create_callbacks()
 
-        total_timesteps = training_config.get("total_timesteps", 2_000_000)
+        total_timesteps = training_config.get("total_timesteps", 3_000_000)
         logger.info(f"Starting training for {total_timesteps} timesteps")
 
+        # Training loop with self-play updates
+        update_freq = 10_000
+        save_freq = 100_000
+        current_timesteps = 0
+
         try:
-            self.model.learn(
-                total_timesteps=total_timesteps,
-                callback=callbacks,
-                tb_log_name="ppo_soccer",
-                reset_num_timesteps=False,
-            )
+            while current_timesteps < total_timesteps:
+                # Train for update_freq steps
+                steps_to_train = min(update_freq, total_timesteps - current_timesteps)
+                
+                self.model.learn(
+                    total_timesteps=steps_to_train,
+                    callback=callbacks,
+                    tb_log_name="ppo_soccer",
+                    reset_num_timesteps=False,
+                )
+
+                current_timesteps += steps_to_train
+
+                # Update self-play opponent
+                if self.self_play_manager is not None:
+                    self.self_play_manager.on_training_step(self.model, current_timesteps)
+                    self._update_opponent_policies()
+
+                # Save checkpoint periodically
+                if current_timesteps % save_freq == 0:
+                    checkpoint_path = self.output_dir / "checkpoints" / f"checkpoint_{current_timesteps}.pth"
+                    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+                    torch.save({
+                        'policy_state_dict': self.model.policy.state_dict(),
+                        'timesteps': current_timesteps,
+                    }, checkpoint_path)
+                    logger.info(f"Saved checkpoint at {current_timesteps} steps")
 
             logger.info("Training completed successfully")
 
